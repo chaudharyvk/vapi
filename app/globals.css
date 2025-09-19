@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 214, 219, 220;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+  }
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
+}
+
+@layer components {
+  .btn {
+    @apply px-5 py-3 rounded-lg font-semibold transition-all duration-300 
+           flex items-center justify-center gap-2 min-w-[140px]
+           hover:-translate-y-0.5 hover:shadow-lg
+           active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed
+           disabled:transform-none disabled:shadow-none;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-primary text-white;
+  }
+
+  .btn-secondary {
+    @apply bg-gradient-secondary text-white;
+  }
+
+  .btn-success {
+    @apply bg-gradient-success text-white;
+  }
+
+  .btn-danger {
+    @apply bg-gradient-danger text-white;
+  }
+
+  .card {
+    @apply bg-white/95 backdrop-blur-sm rounded-2xl shadow-lg p-6
+           border border-white/20;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 border-2 border-gray-200 rounded-lg
+           focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10
+           transition-all duration-300 outline-none;
+  }
+
+  .message {
+    @apply mb-4 p-3 rounded-lg max-w-[80%];
+  }
+
+  .message.user {
+    @apply bg-gradient-primary text-white ml-auto text-right;
+  }
+
+  .message.assistant {
+    @apply bg-gray-100 text-gray-800;
+  }
+
+  .log-entry {
+    @apply mb-2 pb-2 border-b border-gray-600 last:border-b-0;
+  }
+
+  .log-time {
+    @apply text-green-400 font-bold;
+  }
+
+  .log-level {
+    @apply font-bold mx-2;
+  }
+
+  .log-level.info {
+    @apply text-blue-400;
+  }
+
+  .log-level.success {
+    @apply text-green-400;
+  }
+
+  .log-level.error {
+    @apply text-red-400;
+  }
+
+  .log-level.warning {
+    @apply text-yellow-400;
+  }
+}
