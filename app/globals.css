@@ -101,4 +101,27 @@ body {
   .log-level.warning {
     @apply text-yellow-400;
   }
+
+  /* Video recording styles */
+  .video-container {
+    @apply relative overflow-hidden rounded-lg bg-gray-900;
+    aspect-ratio: 16/9;
+  }
+
+  .video-preview {
+    @apply w-full h-full object-cover;
+  }
+
+  .recording-indicator {
+    @apply absolute top-4 left-4 flex items-center gap-2 
+           bg-red-600 text-white px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  .recording-dot {
+    @apply w-2 h-2 bg-white rounded-full animate-pulse;
+  }
+
+  .video-overlay {
+    @apply absolute inset-0 flex items-center justify-center text-gray-400;
+  }
 }

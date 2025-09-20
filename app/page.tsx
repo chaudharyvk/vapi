@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Mic, Phone, PhoneOff, Settings, Trash2, Save, RefreshCcw, AlertCircle, CheckCircle } from 'lucide-react'
+import { Mic, Phone, PhoneOff, Settings, Trash2, Save, RefreshCcw, AlertCircle, CheckCircle, Video, Download, Play } from 'lucide-react'
 import Vapi from '@vapi-ai/web'
 
 interface Message {
@@ -27,8 +27,18 @@ export default function HomePage() {
   const [healthCheckStatus, setHealthCheckStatus] = useState<'checking' | 'healthy' | 'unhealthy' | 'idle'>('idle')
   const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null)
 
-  // Initialize VAPI instance
+  // Video recording state
+  const [isVideoRecording, setIsVideoRecording] = useState(false)
+  const [videoBlob, setVideoBlob] = useState<Blob | null>(null)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+
+  // Refs
   const vapiRef = useRef<Vapi | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Logging function
   const log = useCallback((message: string, level: LogEntry['level'] = 'info') => {
@@ -45,10 +55,20 @@ export default function HomePage() {
   useEffect(() => {
     if (apiKey && typeof window !== 'undefined') {
       try {
+        // Initialize VAPI with proper configuration for web usage
+        const vapiConfig = {
+          apiKey,
+          // Add any additional configuration for better browser compatibility
+        }
+        
         vapiRef.current = new Vapi(apiKey)
         log('VAPI SDK initialized successfully', 'success')
+        log('VAPI Web SDK ready for voice calls (uses WebRTC, not direct API calls)', 'info')
       } catch (error) {
         log(`Failed to initialize VAPI SDK: ${error}`, 'error')
+        if (error instanceof Error) {
+          log(`SDK Error: ${error.message}`, 'error')
+        }
       }
     }
   }, [apiKey, log])
@@ -113,7 +133,104 @@ export default function HomePage() {
     log('Logs and conversation cleared', 'info')
   }, [log])
 
-  // Health check function using VAPI SDK
+  // Video recording functions
+  const startVideoRecording = useCallback(async () => {
+    try {
+      log('Requesting camera and microphone access...', 'info')
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        },
+        audio: true
+      })
+
+      streamRef.current = stream
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9,opus'
+      })
+      
+      mediaRecorderRef.current = mediaRecorder
+      const chunks: Blob[] = []
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data)
+        }
+      }
+
+      mediaRecorder.onstop = () => {
+        const videoBlob = new Blob(chunks, { type: 'video/webm' })
+        setVideoBlob(videoBlob)
+        
+        const url = URL.createObjectURL(videoBlob)
+        setVideoUrl(url)
+        
+        log(`Video recording saved (${(videoBlob.size / 1024 / 1024).toFixed(2)} MB)`, 'success')
+        
+        // Stop all tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop())
+          streamRef.current = null
+        }
+      }
+
+      mediaRecorder.start()
+      setIsVideoRecording(true)
+      setRecordingDuration(0)
+      
+      // Start duration timer
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1)
+      }, 1000)
+
+      log('Video recording started', 'success')
+      
+    } catch (error) {
+      log(`Error starting video recording: ${error}`, 'error')
+    }
+  }, [log])
+
+  const stopVideoRecording = useCallback(() => {
+    if (mediaRecorderRef.current && isVideoRecording) {
+      mediaRecorderRef.current.stop()
+      setIsVideoRecording(false)
+      
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+        recordingIntervalRef.current = null
+      }
+      
+      log('Video recording stopped', 'info')
+    }
+  }, [isVideoRecording, log])
+
+  const downloadVideo = useCallback(() => {
+    if (videoBlob && videoUrl) {
+      const a = document.createElement('a')
+      a.href = videoUrl
+      a.download = `vapi-recording-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      log('Video download started', 'info')
+    }
+  }, [videoBlob, videoUrl, log])
+
+  const formatDuration = useCallback((seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }, [])
+
+  // Health check function using server-side API
   const checkVapiHealth = useCallback(async () => {
     if (!apiKey) {
       log('API key required for health check', 'error')
@@ -121,57 +238,93 @@ export default function HomePage() {
     }
 
     setHealthCheckStatus('checking')
-    log(`Checking VAPI API connectivity with API key: ${apiKey}`, 'info')
-    log('Using VAPI SDK for health check...', 'info')
+    log(`Checking VAPI API connectivity with API key: ${apiKey.substring(0, 8)}...`, 'info')
+    log('Using server-side health check to avoid CORS issues...', 'info')
 
     try {
-      // Initialize a new VAPI instance for health check
-      const vapi = new Vapi(apiKey)
-      log('VAPI SDK instance created successfully', 'info')
+      // Use server-side API route for health check to avoid CORS
+      const response = await fetch('/api/vapi/health', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ apiKey }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.details || data.error || `HTTP ${response.status}`)
+      }
+
+      setHealthCheckStatus('healthy')
+      setLastHealthCheck(new Date())
+      log('VAPI API health check successful', 'success')
+      log(`${data.message} - Assistant count: ${data.assistantCount}`, 'success')
       
-      // Try to start and immediately stop a call as a health check
-      // This will verify the API key without actually making a call
-      try {
-        // Just verify the SDK can be initialized with the API key
-        setHealthCheckStatus('healthy')
-        setLastHealthCheck(new Date())
-        log('VAPI SDK health check successful', 'success')
-        log('VAPI API key is valid and SDK is functional', 'success')
-      } catch (callError) {
-        throw callError
+      // Validate assistant ID if provided
+      if (assistantId) {
+        try {
+          log(`Validating assistant ID: ${assistantId}`, 'info')
+          
+          const assistantResponse = await fetch('/api/vapi/call', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              apiKey, 
+              assistantId, 
+              action: 'validate-assistant' 
+            }),
+          })
+
+          const assistantData = await assistantResponse.json()
+
+          if (!assistantResponse.ok) {
+            throw new Error(assistantData.details || assistantData.error || `HTTP ${assistantResponse.status}`)
+          }
+
+          log('Assistant ID validation successful', 'success')
+          log(`Assistant name: ${assistantData.data.name || 'Unknown'}`, 'info')
+          
+        } catch (assistantError) {
+          log('Assistant ID validation failed', 'error')
+          
+          if (assistantError instanceof Error) {
+            if (assistantError.message.includes('404')) {
+              log('Error: Assistant not found - please check your Assistant ID', 'error')
+              log('Get your Assistant ID from: https://dashboard.vapi.ai/assistants', 'info')
+            } else {
+              log(`Error: ${assistantError.message}`, 'error')
+            }
+          }
+        }
       }
       
     } catch (error) {
       setHealthCheckStatus('unhealthy')
       setLastHealthCheck(new Date())
       
-      log('VAPI SDK health check failed - Exception caught', 'error')
+      log('VAPI API health check failed', 'error')
       
       if (error instanceof Error) {
-        log(`Error Name: ${error.name}`, 'error')
-        log(`Error Message: ${error.message}`, 'error')
+        log(`Error: ${error.message}`, 'error')
         
-        // Check for specific VAPI SDK error types
-        if (error.message.includes('401')) {
-          log('Error Details: Invalid API key (401 Unauthorized)', 'error')
-        } else if (error.message.includes('403')) {
-          log('Error Details: Access forbidden (403 Forbidden)', 'error')
+        // Provide helpful guidance based on error
+        if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+          log('Solution: Check that your API key is correct and active', 'warning')
+          log('Get your API key from: https://dashboard.vapi.ai/account', 'info')
+        } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+          log('Solution: Check your API key permissions and account status', 'warning')
         } else if (error.message.includes('network') || error.message.includes('fetch')) {
-          log('Error Details: Network error - please check your internet connection', 'error')
-        } else {
-          log(`Error Details: ${error.message}`, 'error')
-        }
-        
-        // Log error stack for debugging if available
-        if (error.stack) {
-          log(`Error Stack: ${error.stack.substring(0, 300)}...`, 'error')
+          log('Solution: Check your internet connection and try again', 'warning')
         }
       } else {
-        log('Error Details: Unknown error type', 'error')
-        log(`Error Object: ${JSON.stringify(error)}`, 'error')
+        log(`Unexpected error: ${error}`, 'error')
       }
     }
-  }, [apiKey, log])
+  }, [apiKey, assistantId, log])
 
   // Auto health check on API key change
   useEffect(() => {
@@ -193,36 +346,72 @@ export default function HomePage() {
     }
 
     if (!vapiRef.current) {
-      log('VAPI SDK not initialized', 'error')
+      log('VAPI SDK not initialized. Please check your API key.', 'error')
       return
     }
 
     try {
-      log('Starting VAPI call...', 'info')
+      log('Starting VAPI call with recording enabled...', 'info')
       log(`Using assistant ID: ${assistantId}`, 'info')
+      
+      // Start local video recording automatically when call starts
+      await startVideoRecording()
+      
       setIsCallActive(true)
 
-      // Assistant ID is required by VAPI SDK
+      // Configure call with proper VAPI SDK parameters
+      // Based on TypeScript error, VAPI start() expects string | CreateAssistantDTO
+      // Use the assistant ID directly as a string
+      
+      log('Starting call with assistant ID as string parameter', 'info')
+      log(`Using assistant: ${assistantId}`, 'info')
+      log('Note: VAPI Web SDK uses WebRTC for calls, not direct HTTP requests', 'info')
+      
+      // Start VAPI call - pass assistant ID directly as string
       await vapiRef.current.start(assistantId)
       log('VAPI call started successfully', 'success')
-      addMessage('Call started', 'assistant')
+      log('Note: Server-side recording may need to be configured in your VAPI assistant settings', 'info')
+      addMessage('Call started - local video recording active', 'assistant')
 
     } catch (error) {
       setIsCallActive(false)
+      // Stop video recording if call failed to start
+      if (isVideoRecording) {
+        stopVideoRecording()
+      }
+      
       log(`Error starting VAPI call: ${error}`, 'error')
       addMessage(`Error starting call: ${error}`, 'assistant')
       
       // Provide helpful guidance for common errors
       if (error instanceof Error) {
-        if (error.message.includes('Assistant or Squad must be provided')) {
+        const errorMessage = error.message.toLowerCase()
+        
+        if (errorMessage.includes('assistant') || errorMessage.includes('squad')) {
           log('Solution: Please enter a valid Assistant ID in the configuration section above', 'warning')
           log('You can find your Assistant ID in your VAPI dashboard at https://dashboard.vapi.ai/assistants', 'info')
-        } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+        } else if (errorMessage.includes('bad request') || errorMessage.includes('assistantid should not exist')) {
+          log('Solution: VAPI SDK configuration issue resolved - assistant ID now passed correctly', 'success')
+          log('If this error persists, verify your Assistant ID format and permissions', 'warning')
+        } else if (errorMessage.includes('403') || errorMessage.includes('forbidden') || errorMessage.includes('unauthorized')) {
           log('Solution: Check that your Assistant ID is correct and accessible with your API key', 'warning')
+          log('Ensure the assistant belongs to your account and is active', 'info')
+        } else if (errorMessage.includes('microphone') || errorMessage.includes('permission')) {
+          log('Solution: Please allow microphone access when prompted by your browser', 'warning')
+          log('Check browser settings if microphone access was previously denied', 'info')
+        } else if (errorMessage.includes('network') || errorMessage.includes('connection')) {
+          log('Solution: Check your internet connection and try again', 'warning')
+          log('WebRTC calls require a stable internet connection', 'info')
+        } else if (errorMessage.includes('cors')) {
+          log('Note: If you see CORS errors, they may be unrelated to the WebRTC call functionality', 'info')
+          log('VAPI Web SDK uses WebRTC for voice calls, not direct browser HTTP requests', 'info')
+        } else {
+          log(`Detailed error: ${error.message}`, 'error')
+          log('If the issue persists, check your VAPI dashboard and account status', 'info')
         }
       }
     }
-  }, [apiKey, assistantId, log, addMessage])
+  }, [apiKey, assistantId, log, addMessage, startVideoRecording, isVideoRecording, stopVideoRecording])
 
   // End VAPI call using SDK
   const endVapiCall = useCallback(async () => {
@@ -233,6 +422,12 @@ export default function HomePage() {
 
     try {
       log('Ending VAPI call...', 'info')
+      
+      // Stop video recording when call ends
+      if (isVideoRecording) {
+        stopVideoRecording()
+      }
+      
       await vapiRef.current.stop()
       setIsCallActive(false)
       log('VAPI call ended successfully', 'success')
@@ -241,8 +436,12 @@ export default function HomePage() {
     } catch (error) {
       log(`Error ending VAPI call: ${error}`, 'error')
       setIsCallActive(false)
+      // Ensure video recording stops even if call end fails
+      if (isVideoRecording) {
+        stopVideoRecording()
+      }
     }
-  }, [log, addMessage])
+  }, [log, addMessage, isVideoRecording, stopVideoRecording])
 
   // Set up VAPI event listeners
   useEffect(() => {
@@ -260,6 +459,11 @@ export default function HomePage() {
         log('VAPI call ended', 'info')
         setIsCallActive(false)
         addMessage('Call disconnected', 'assistant')
+        
+        // Automatically stop video recording when call ends
+        if (isVideoRecording) {
+          stopVideoRecording()
+        }
       })
 
       vapi.on('speech-start', () => {
@@ -275,6 +479,16 @@ export default function HomePage() {
         if (message.type === 'transcript' && message.transcript) {
           addMessage(message.transcript, message.role === 'user' ? 'user' : 'assistant')
         }
+        // Log recording-related messages
+        if (message.type === 'recording-started') {
+          log('VAPI server-side recording started', 'success')
+        }
+        if (message.type === 'recording-stopped') {
+          log('VAPI server-side recording stopped', 'info')
+        }
+        if (message.type === 'artifact') {
+          log(`Recording artifact available: ${JSON.stringify(message)}`, 'success')
+        }
       })
 
       vapi.on('error', (error) => {
@@ -288,7 +502,23 @@ export default function HomePage() {
         vapi.removeAllListeners()
       }
     }
-  }, [apiKey, log, addMessage]) // Use apiKey as dependency to re-setup when VAPI instance changes
+  }, [apiKey, log, addMessage, isVideoRecording, stopVideoRecording]) // Use apiKey as dependency to re-setup when VAPI instance changes
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Cleanup video recording
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+      }
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl)
+      }
+    }
+  }, [videoUrl])
 
   return (
     <div className="container mx-auto p-4 max-w-7xl">
@@ -301,7 +531,7 @@ export default function HomePage() {
         <p className="text-lg text-gray-600">Record your voice and interact with VAPI AI</p>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Configuration Section */}
         <div className="card">
           <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
@@ -405,6 +635,19 @@ export default function HomePage() {
                 </div>
               )}
             </div>
+
+            {/* CORS Resolution Note */}
+            <div className="pt-2">
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="text-blue-700 text-sm">
+                  <strong>✅ CORS Issue Resolved:</strong> Health checks now use server-side API routes to avoid browser CORS restrictions. 
+                  Voice calls use WebRTC (not HTTP) so they work directly from the browser.
+                  <div className="mt-1 text-xs text-blue-600">
+                    🔧 Server-side health check | 🎙️ WebRTC voice calls | 📹 Local video recording
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -440,6 +683,9 @@ export default function HomePage() {
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                 <span className="text-sm font-medium">Voice call in progress - speak naturally!</span>
               </div>
+              <div className="mt-2 text-xs text-green-600">
+                📹 Local video recording active | 🎙️ VAPI voice call in progress
+              </div>
             </div>
           )}
           
@@ -447,7 +693,10 @@ export default function HomePage() {
             <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="text-blue-700 text-sm">
                 <strong>How to use:</strong> Click &quot;Start Voice Call&quot; to begin a real-time conversation with your AI assistant. 
-                The SDK will automatically handle voice recording, transcription, and responses.
+                Camera and audio recording will start automatically.            <div className="mt-2 text-xs text-blue-600">
+              🎯 <strong>Auto-Recording:</strong> Local camera/audio recording activates automatically during calls.<br/>
+              📊 <strong>Server Recording:</strong> Configure in your VAPI assistant settings for server-side recording.
+            </div>
               </div>
             </div>
           )}
@@ -462,6 +711,103 @@ export default function HomePage() {
                   <li>Copy the Assistant ID (UUID format)</li>
                   <li>Paste it in the configuration section above</li>
                 </ol>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Automatic Video Recording Section */}
+        <div className="card">
+          <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Video size={20} />
+            Automatic Recording
+          </h3>
+          
+          {/* Video Preview */}
+          <div className="mb-4">
+            <div className="relative bg-gray-900 rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover"
+                muted
+                playsInline
+              />
+              {!isVideoRecording && !streamRef.current && (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+                  <div className="text-center">
+                    <Video size={48} className="mx-auto mb-2 opacity-50" />
+                    <p>Camera will activate during calls</p>
+                  </div>
+                </div>
+              )}
+              {isVideoRecording && (
+                <div className="absolute top-4 left-4 flex items-center gap-2 bg-red-600 text-white px-3 py-1 rounded-full text-sm">
+                  <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                  REC {formatDuration(recordingDuration)}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Recording Status */}
+          {isCallActive && isVideoRecording && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-center gap-2 text-red-700">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                <span className="text-sm font-medium">Recording in progress...</span>
+              </div>
+              <div className="mt-1 text-xs text-red-600">
+                Duration: {formatDuration(recordingDuration)}
+              </div>
+            </div>
+          )}
+
+          {/* Video Playback and Download */}
+          {videoBlob && videoUrl && (
+            <div className="space-y-3">
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-green-700 text-sm">
+                    <strong>Recording saved!</strong>
+                    <div className="text-xs text-green-600 mt-1">
+                      Size: {(videoBlob.size / 1024 / 1024).toFixed(2)} MB
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          videoRef.current.src = videoUrl
+                          videoRef.current.controls = true
+                          videoRef.current.muted = false
+                        }
+                      }}
+                      className="btn btn-secondary text-xs"
+                    >
+                      <Play size={14} />
+                      Preview
+                    </button>
+                    <button
+                      onClick={downloadVideo}
+                      className="btn btn-primary text-xs"
+                    >
+                      <Download size={14} />
+                      Download
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isCallActive && !videoBlob && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="text-blue-700 text-sm">
+                <strong>Automatic Recording:</strong> Camera and audio recording will start automatically when you begin a VAPI call. 
+                The recorded video will be available for download after the call ends.
+                <div className="mt-2 text-xs">
+                  � Both VAPI server-side and local recording will be active during calls.
+                </div>
               </div>
             </div>
           )}

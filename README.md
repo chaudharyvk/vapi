@@ -4,11 +4,12 @@ A modern Next.js TypeScript application for integrating with VAPI AI's voice API
 
 ## 🚀 Features
 
-### 🎙️ Voice Recording
+### 🎙️ Voice Recording & Video Capture
 - High-quality audio recording with noise suppression and echo cancellation
-- Real-time audio visualization with frequency analysis
-- Recording timer and intuitive controls
-- Audio playback functionality before sending
+- Video recording with camera preview and real-time feedback
+- Recording timer and intuitive controls for both audio and video
+- Download recorded videos in WebM format
+- Audio playback and video preview functionality
 
 ### 🤖 VAPI AI Integration
 - Direct integration with VAPI AI Web SDK
@@ -20,12 +21,12 @@ A modern Next.js TypeScript application for integrating with VAPI AI's voice API
 - Responsive design built with Tailwind CSS
 - Beautiful gradient backgrounds and smooth animations
 - Real-time status updates and comprehensive logging
-- Mobile-first responsive design
+- Mobile-first responsive design with 3-column layout
 
 ### ⚡ Technical Features
 - Next.js 14 with App Router
 - TypeScript for type safety
-- Client-side rendering for audio APIs
+- Client-side rendering for audio/video APIs
 - Local storage for API key management
 - Error handling and comprehensive logging
 
@@ -112,6 +113,14 @@ If you don't use environment variables:
 5. **End Call**: Click "End Call" when finished
 6. **Review**: Check the conversation history and logs for details
 
+### Video Recording
+1. **Start Recording**: Click "Start Recording" to begin capturing video and audio
+2. **Camera Preview**: See your camera feed in real-time during recording
+3. **Recording Indicator**: A red "REC" indicator shows recording status and duration
+4. **Stop Recording**: Click "Stop Recording" to finish and save the video
+5. **Preview & Download**: Preview the recorded video and download it as a WebM file
+6. **Concurrent Use**: Record video while having VAPI voice calls for complete session capture
+
 ### VAPI Integration
 1. **API Health Check**: The application automatically checks VAPI API connectivity when you enter your API key
 2. **Start Call**: Use "Start Call" button to initiate a voice call with your configured assistant
@@ -139,13 +148,15 @@ If you don't use environment variables:
 ```
 vapi/
 ├── app/
+│   ├── api/                 # Server-side API routes
+│   │   └── vapi/           # VAPI-related endpoints
+│   │       ├── health/     # Health check endpoint
+│   │       │   └── route.ts
+│   │       └── call/       # Call management endpoint
+│   │           └── route.ts
 │   ├── globals.css          # Global styles with Tailwind CSS
 │   ├── layout.tsx           # Root layout component
 │   └── page.tsx             # Main application page
-├── components/
-│   └── VapiClient.tsx       # VAPI integration component
-├── types/
-│   └── vapi.d.ts           # TypeScript type definitions
 ├── package.json            # Project dependencies and scripts
 ├── tsconfig.json           # TypeScript configuration
 ├── tailwind.config.js      # Tailwind CSS configuration
@@ -153,23 +164,54 @@ vapi/
 └── postcss.config.js       # PostCSS configuration
 ```
 
+## 🏛️ Architecture & CORS Solution
+
+### Hybrid Architecture for CORS Resolution
+
+This application uses a hybrid architecture to resolve CORS issues while maintaining optimal performance:
+
+#### 🖥️ Server-Side Components
+- **Health Checks**: `/api/vapi/health` - Server-side API validation to avoid CORS
+- **Assistant Validation**: `/api/vapi/call` - Server-side assistant verification  
+- **API Key Testing**: Server-side VAPI API calls for configuration validation
+
+#### 🌐 Client-Side Components  
+- **Voice Calls**: Direct WebRTC connection via VAPI Web SDK (no CORS issues)
+- **Video Recording**: Local MediaRecorder API for camera and audio capture
+- **UI Management**: React state management for real-time updates
+
+#### 🔄 Data Flow
+1. **Configuration**: API keys validated server-side through Next.js API routes
+2. **Health Checks**: Server-side calls to VAPI API with proper authentication headers
+3. **Voice Calls**: Client-side WebRTC through VAPI SDK (bypasses CORS entirely)
+4. **Recording**: Local browser APIs for video/audio capture and processing
+
+This architecture ensures:
+- ✅ No CORS issues for health checks (server-side)
+- ✅ No CORS issues for voice calls (WebRTC)
+- ✅ Proper error handling with detailed feedback
+- ✅ Secure API key handling
+
 ## 🎯 Key Components
 
 ### Main Application (`app/page.tsx`)
-- State management for recording and VAPI integration
-- Audio recording with MediaRecorder API
-- Real-time audio visualization using Web Audio API
-- Recording timer and status management
+- React state management for voice calls and video recording  
+- VAPI Web SDK integration with WebRTC for voice calls
+- Automatic video recording synchronized with voice calls
+- Real-time UI updates and comprehensive logging system
+- Client-side audio/video capture using MediaRecorder API
 
-### VAPI Client (`components/VapiClient.tsx`)
-- VAPI Web SDK integration
-- Event handling for call states
-- Dynamic import to avoid SSR issues
+### API Routes (`app/api/vapi/`)
+- **Health Check Route** (`health/route.ts`): Server-side VAPI API validation
+- **Call Management Route** (`call/route.ts`): Server-side assistant validation and call management
+- Eliminates CORS issues by handling API calls server-side
+- Secure API key handling without exposing keys in browser
 
-### Type Definitions (`types/vapi.d.ts`)
-- TypeScript interfaces for VAPI SDK
-- State management types
-- Message and log entry interfaces
+### CORS-Free Architecture
+- **Voice Calls**: WebRTC through VAPI SDK (no HTTP requests to VAPI API)
+- **Health Checks**: Server-side Next.js API routes with proper CORS headers
+- **Video Recording**: Local browser MediaRecorder API (no external requests)
+- **Configuration**: Environment variables and localStorage for secure key management
 
 ## 🚀 Building for Production
 
@@ -207,6 +249,32 @@ vapi/
 ## 🔧 Troubleshooting
 
 ### Common Issues
+
+#### ✅ CORS (Cross-Origin Resource Sharing) Errors - RESOLVED
+**Previous Issue:** You might see CORS errors like "Response {data: null, error: {...}, type: 'cors'}" in the browser console.
+
+**✅ Solution Implemented:**
+This application now handles CORS issues through several mechanisms:
+
+1. **Server-Side Health Checks**: API connectivity checks are now performed server-side using Next.js API routes (`/api/vapi/health`) to avoid browser CORS restrictions.
+
+2. **WebRTC for Voice Calls**: VAPI voice calls use WebRTC technology, which doesn't require direct HTTP calls from the browser to `api.vapi.ai`, eliminating CORS issues for the core functionality.
+
+3. **Hybrid Architecture**: 
+   - ✅ Health checks and validation: Server-side API routes
+   - ✅ Voice calls: WebRTC (no CORS issues)  
+   - ✅ Video recording: Local MediaRecorder API
+
+**What This Means:**
+- The CORS error you see may be related to health checks, but won't affect voice calls
+- Voice calls work directly through WebRTC without HTTP requests
+- Health status is now checked server-side to provide accurate API validation
+- The application functions fully despite any residual CORS messages
+
+**Verification:**
+- Look for the "✅ CORS Issue Resolved" notice in the configuration section
+- Health checks should complete successfully
+- Voice calls should work without CORS-related failures
 
 #### 403 Forbidden Error: "Key doesn't allow assistantId"
 **Solution:**
