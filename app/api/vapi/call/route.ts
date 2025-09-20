@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
   try {
-    const { apiKey, assistantId, action } = await request.json()
+    const { apiKey: providedKey, assistantId, action } = await request.json()
+
+    const serverKey = process.env.VAPI_SERVER_API_KEY
+    const apiKey = serverKey || providedKey
 
     if (!apiKey || !assistantId) {
       return NextResponse.json(

@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
   try {
-    const { apiKey } = await request.json()
+    const { apiKey: providedKey } = await request.json()
+
+    const serverKey = process.env.VAPI_SERVER_API_KEY
+    const apiKey = serverKey || providedKey
 
     if (!apiKey) {
       return NextResponse.json(
@@ -36,7 +39,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'VAPI API is accessible',
-      assistantCount: Array.isArray(data) ? data.length : 'unknown'
+      assistantCount: Array.isArray(data) ? data.length : 'unknown',
+      usedKey: serverKey ? 'server' : 'client'
     })
 
   } catch (error) {

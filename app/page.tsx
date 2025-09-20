@@ -32,6 +32,9 @@ export default function HomePage() {
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [recordingDuration, setRecordingDuration] = useState(0)
+  // Chunked upload state
+  const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null)
+  const [uploadedChunks, setUploadedChunks] = useState(0)
 
   // Refs
   const vapiRef = useRef<Vapi | null>(null)
@@ -39,6 +42,8 @@ export default function HomePage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const chunkIndexRef = useRef<number>(0)
+  const recordingStartTimeRef = useRef<number | null>(null)
 
   // Logging function
   const log = useCallback((message: string, level: LogEntry['level'] = 'info') => {
@@ -133,6 +138,47 @@ export default function HomePage() {
     log('Logs and conversation cleared', 'info')
   }, [log])
 
+  // Upload a single chunk to the server -> GCP
+  const uploadChunk = useCallback(async (sessionId: string, index: number, blob: Blob, mimeType: string) => {
+    try {
+      const res = await fetch(`/api/recording/chunk?sessionId=${encodeURIComponent(sessionId)}&index=${index}&mimeType=${encodeURIComponent(mimeType)}` , {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream'
+        },
+        body: blob
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Chunk upload failed (${index}): ${res.status} ${text}`)
+      }
+      setUploadedChunks(prev => prev + 1)
+      log(`Uploaded chunk #${index}`, 'info')
+    } catch (e) {
+      log(`Error uploading chunk #${index}: ${e}`, 'error')
+    }
+  }, [log])
+
+  // Finalize session by writing a manifest
+  const finalizeUpload = useCallback(async (sessionId: string, totalChunks: number, mimeType: string, startedAt: number, endedAt: number) => {
+    try {
+      const res = await fetch('/api/recording/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ sessionId, totalChunks, mimeType, startedAt, endedAt })
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Finalize failed: ${res.status} ${text}`)
+      }
+      log(`Recording session ${sessionId} finalized`, 'success')
+    } catch (e) {
+      log(`Error finalizing upload: ${e}`, 'error')
+    }
+  }, [log])
+
   // Video recording functions
   const startVideoRecording = useCallback(async () => {
     try {
@@ -153,20 +199,33 @@ export default function HomePage() {
         videoRef.current.play()
       }
 
+      const mimeType = 'video/webm;codecs=vp9,opus'
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp9,opus'
+        mimeType
       })
       
       mediaRecorderRef.current = mediaRecorder
       const chunks: Blob[] = []
 
+      // Initialize session ID and counters
+      const newSessionId = crypto.randomUUID()
+      setRecordingSessionId(newSessionId)
+      chunkIndexRef.current = 0
+      setUploadedChunks(0)
+      recordingStartTimeRef.current = Date.now()
+      log(`Recording session started: ${newSessionId}`, 'success')
+
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           chunks.push(event.data)
+          // Upload this chunk immediately
+          const currentIndex = chunkIndexRef.current
+          uploadChunk(newSessionId, currentIndex, event.data, mimeType)
+          chunkIndexRef.current = currentIndex + 1
         }
       }
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const videoBlob = new Blob(chunks, { type: 'video/webm' })
         setVideoBlob(videoBlob)
         
@@ -180,9 +239,21 @@ export default function HomePage() {
           streamRef.current.getTracks().forEach(track => track.stop())
           streamRef.current = null
         }
+
+        // Finalize upload with manifest
+        try {
+          const endedAt = Date.now()
+          const totalChunks = chunkIndexRef.current
+          if (newSessionId) {
+            await finalizeUpload(newSessionId, totalChunks, mimeType, recordingStartTimeRef.current ?? endedAt, endedAt)
+          }
+        } catch (e) {
+          log(`Finalize error: ${e}`, 'error')
+        }
       }
 
-      mediaRecorder.start()
+      // Start recording with a timeslice to get periodic chunks
+      mediaRecorder.start(5000) // 5s chunks
       setIsVideoRecording(true)
       setRecordingDuration(0)
       
@@ -196,7 +267,7 @@ export default function HomePage() {
     } catch (error) {
       log(`Error starting video recording: ${error}`, 'error')
     }
-  }, [log])
+  }, [log, uploadChunk, finalizeUpload])
 
   const stopVideoRecording = useCallback(() => {
     if (mediaRecorderRef.current && isVideoRecording) {
@@ -368,7 +439,11 @@ export default function HomePage() {
       log('Note: VAPI Web SDK uses WebRTC for calls, not direct HTTP requests', 'info')
       
       // Start VAPI call - pass assistant ID directly as string
-      await vapiRef.current.start(assistantId)
+      await vapiRef.current.start(assistantId, {
+        artifactPlan: {
+          videoRecordingEnabled: true,
+        },
+      })
       log('VAPI call started successfully', 'success')
       log('Note: Server-side recording may need to be configured in your VAPI assistant settings', 'info')
       addMessage('Call started - local video recording active', 'assistant')
@@ -643,11 +718,17 @@ export default function HomePage() {
                   <strong>✅ CORS Issue Resolved:</strong> Health checks now use server-side API routes to avoid browser CORS restrictions. 
                   Voice calls use WebRTC (not HTTP) so they work directly from the browser.
                   <div className="mt-1 text-xs text-blue-600">
-                    🔧 Server-side health check | 🎙️ WebRTC voice calls | 📹 Local video recording
+                    🔧 Server-side health check | 🎙️ WebRTC voice calls | 📹 Local video recording | ☁️ Chunked GCP uploads
                   </div>
                 </div>
               </div>
             </div>
+
+            {recordingSessionId && (
+              <div className="pt-2 text-xs text-gray-600">
+                Session ID: <span className="font-mono">{recordingSessionId}</span> • Uploaded chunks: {uploadedChunks}
+              </div>
+            )}
           </div>
         </div>
 
@@ -684,7 +765,7 @@ export default function HomePage() {
                 <span className="text-sm font-medium">Voice call in progress - speak naturally!</span>
               </div>
               <div className="mt-2 text-xs text-green-600">
-                📹 Local video recording active | 🎙️ VAPI voice call in progress
+                📹 Local video recording active | 🎙️ VAPI voice call in progress | ☁️ Chunks uploading
               </div>
             </div>
           )}
@@ -757,7 +838,7 @@ export default function HomePage() {
                 <span className="text-sm font-medium">Recording in progress...</span>
               </div>
               <div className="mt-1 text-xs text-red-600">
-                Duration: {formatDuration(recordingDuration)}
+                Duration: {formatDuration(recordingDuration)} • Session: {recordingSessionId} • Uploaded chunks: {uploadedChunks}
               </div>
             </div>
           )}
